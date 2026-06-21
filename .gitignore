@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Sanal ortam
+.venv/
+venv/
+env/
+
+# Playwright tarayıcıları
+ms-playwright/
+
+# Loglar / geçici çıktılar
+scrape.log
+nohup.out
+*.tmp
+
+# İşletim sistemi / editör
+.DS_Store
+.idea/
+.vscode/
+.claude/

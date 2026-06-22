@@ -14,6 +14,10 @@ sayfasını akıllıca bulur ve sonuçları temiz bir Excel tablosuna yazar.
 ## ✨ Özellikler
 
 - **1003 belediye** başlangıç matrisi: 30 Büyükşehir + 51 İl + 922 İlçe.
+- **Belediye başkanı + parti:** 2024 yerel seçim sonuçlarından (Wikipedia) her
+  belediyenin güncel başkanı ve partisi otomatik eklenir (1003/1003).
+- **Hiçbir belediye atlanmaz:** iletişim sayfasına ulaşılamayan belediyeler bile
+  ad + başkan bilgisiyle tabloda yer alır (çıktıda her zaman 1003 satır).
 - **Kademeli iletişim sayfası bulma:** önce `/iletisim` türevleri, bulunamazsa
   ana sayfadaki "İletişim / Bize Ulaşın" bağlantısını bulup tıklama (fallback).
 - **Akıllı domain çözümü:** Türkçe karakter sadeleştirme, `www`/`belediyesi`
@@ -108,13 +112,16 @@ tail -f scrape.log
 | İlçe | İlçe adı (İl/Büyükşehir satırlarında boş) |
 | Belediye Türü | `Büyükşehir` / `İl` / `İlçe` |
 | Belediye Adı | Örn. "Kadıköy Belediyesi" |
+| Belediye Başkanı | 2024 seçimlerinde seçilen başkan |
+| Parti | Başkanın partisi (CHP, AK Parti, MHP…) |
 | Web Sitesi | Çözümlenen resmi alan adı |
 | Adres | Temizlenmiş kurum adresi |
 | Telefon | `0XXX XXX XX XX` veya `444`'lü numara |
 | E-posta | Öncelikli `@...bel.tr` |
 | Kaynak | Verinin çekildiği URL / yöntem |
 
-**Örnek sonuçlar:** 913 belediye, 81/81 il; 880 telefon, 796 adres, 844 e-posta.
+**Örnek sonuçlar:** 1003 satır (81/81 il); 1003 başkan, 872 telefon, 788 adres,
+844 e-posta. İletişim sayfasına ulaşılamayan belediyeler de ad + başkan ile listede.
 
 ---
 
@@ -140,11 +147,17 @@ Tarayıcıyı **görmek** için `chromium.launch(headless=True ...)` satırını
 turkiye-belediye-scraper/
 ├── scrape_belediyeler.py     # Ana bot (Playwright + ayıklama mantığı)
 ├── turkiye_data.py           # 81 il / 922 ilçe veri matrisi + domain üretimi
+├── wiki_baskanlar.py         # Wikipedia 2024 seçimlerinden başkan/parti çekme
 ├── requirements.txt          # Python bağımlılıkları
 ├── sıfırdan_belediyeler_veritabanı.xlsx  # Üretilen veritabanı (örnek çıktı)
 ├── raw_pages.pkl             # Ham sayfa metni önbelleği (reextract için)
+├── baskanlar.pkl             # Başkan/parti önbelleği
 └── README.md
 ```
+
+> **Başkan verisi:** İlk çalıştırmada `baskanlar.pkl` yoksa bot, başkanları
+> otomatik olarak Wikipedia'dan çeker. Dilersen elle de oluşturabilirsin:
+> `python wiki_baskanlar.py`
 
 ---
 

@@ -16,6 +16,10 @@ ms-playwright/
 scrape.log
 nohup.out
 *.tmp
+gh_auth.log
+
+# Office geçici/kilit dosyaları
+~$*
 
 # İşletim sistemi / editör
 .DS_Store

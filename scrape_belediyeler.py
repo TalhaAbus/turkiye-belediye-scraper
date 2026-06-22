@@ -13,6 +13,20 @@ import pandas as pd
 from playwright.async_api import async_playwright
 
 from turkiye_data import build_rows
+import wiki_baskanlar
+
+BASKAN_MAP = {}          # (il, ilçe) -> (başkan, parti)
+
+
+def load_baskan():
+    global BASKAN_MAP
+    BASKAN_MAP = wiki_baskanlar.load()
+    if not BASKAN_MAP:               # önbellek yoksa Wikipedia'dan oluştur
+        try:
+            BASKAN_MAP = wiki_baskanlar.build(verbose=False)
+        except Exception:
+            BASKAN_MAP = {}
+    return BASKAN_MAP
 
 OUTPUT = "sıfırdan_belediyeler_veritabanı.xlsx"
 CONCURRENCY = 8
@@ -352,14 +366,30 @@ async def scrape_one(page, row):
     return best
 
 
+def belediye_adi(row):
+    if row["tur"] == "Büyükşehir":
+        return row["il"] + " Büyükşehir Belediyesi"
+    if row["tur"] == "İl":
+        return row["il"] + " Belediyesi"
+    return row["ilce"] + " Belediyesi"
+
+
+def baskan_of(row):
+    """İlgili belediyenin (başkan, parti) bilgisini döndürür."""
+    key = (row["il"], row["ilce"]) if row["tur"] == "İlçe" else (row["il"], "")
+    b = BASKAN_MAP.get(key)
+    return (b[0], b[1]) if b else ("", "")
+
+
 def build_record(row, text, domain, source):
+    bk, parti = baskan_of(row)
     rec = {
         "İl": row["il"],
         "İlçe": row["ilce"],
         "Belediye Türü": row["tur"],
-        "Belediye Adı": (row["il"] + " Büyükşehir Belediyesi") if row["tur"] == "Büyükşehir"
-                        else (row["il"] + " Belediyesi") if row["tur"] == "İl"
-                        else (row["ilce"] + " Belediyesi"),
+        "Belediye Adı": belediye_adi(row),
+        "Belediye Başkanı": bk,
+        "Parti": parti,
         "Web Sitesi": "https://" + domain,
         "Adres": extract_address(text, row["il"], row["ilce"]) or "",
         "Telefon": extract_phone(text) or "",
@@ -370,8 +400,19 @@ def build_record(row, text, domain, source):
     return rec
 
 
-COLUMNS = ["İl", "İlçe", "Belediye Türü", "Belediye Adı", "Web Sitesi",
-           "Adres", "Telefon", "E-posta", "Kaynak"]
+def empty_record(row):
+    """İletişim sayfasına ulaşılamayan belediye için temel satır (req: atlama)."""
+    bk, parti = baskan_of(row)
+    return {
+        "İl": row["il"], "İlçe": row["ilce"], "Belediye Türü": row["tur"],
+        "Belediye Adı": belediye_adi(row), "Belediye Başkanı": bk, "Parti": parti,
+        "Web Sitesi": "", "Adres": "", "Telefon": "", "E-posta": "",
+        "Kaynak": "İletişim sayfasına ulaşılamadı", "_raw": "",
+    }
+
+
+COLUMNS = ["İl", "İlçe", "Belediye Türü", "Belediye Adı", "Belediye Başkanı",
+           "Parti", "Web Sitesi", "Adres", "Telefon", "E-posta", "Kaynak"]
 RAW_CACHE = "raw_pages.pkl"
 
 
@@ -395,27 +436,29 @@ def checkpoint():
 
 
 def reextract():
-    """Ham önbellekten (raw_pages.pkl) xlsx'i yeniden üretir — tarama yok."""
-    with open(RAW_CACHE, "rb") as f:
-        raw = pickle.load(f)
+    """Tüm 1003 belediyeyi yazar: iletişim verisi önbellekten, başkan
+    Wikipedia eşlemesinden. Tarama yapılmaz (saniyeler içinde)."""
+    load_baskan()
+    cache = {}
+    try:
+        with open(RAW_CACHE, "rb") as f:
+            for d in pickle.load(f).values():
+                if d.get("text"):
+                    cache[(d["il"], d["ilce"], d["tur"])] = d
+    except FileNotFoundError:
+        pass
+
     rows = []
-    for i in sorted(raw):
-        d = raw[i]
-        text, domain = d["text"], d["domain"]
-        tur = d["tur"]
-        ad = (d["il"] + " Büyükşehir Belediyesi") if tur == "Büyükşehir" \
-            else (d["il"] + " Belediyesi") if tur == "İl" \
-            else (d["ilce"] + " Belediyesi")
-        rows.append({
-            "İl": d["il"], "İlçe": d["ilce"], "Belediye Türü": tur,
-            "Belediye Adı": ad, "Web Sitesi": "https://" + domain,
-            "Adres": extract_address(text, d["il"], d["ilce"]) or "",
-            "Telefon": extract_phone(text) or "",
-            "E-posta": extract_email(text, domain) or "",
-            "Kaynak": d["source"]})
+    for r in build_rows():
+        d = cache.get((r["il"], r["ilce"], r["tur"]))
+        rows.append(build_record(r, d["text"], d["domain"], d["source"])
+                    if d else empty_record(r))
     pd.DataFrame(rows)[COLUMNS].to_excel(OUTPUT, index=False)
-    full = sum(1 for r in rows if r["Adres"])
-    print(f"Yeniden ayıklandı: {len(rows)} kayıt, {full} adres dolu -> {OUTPUT}")
+    adr = sum(1 for r in rows if r["Adres"])
+    tel = sum(1 for r in rows if r["Telefon"])
+    bsk = sum(1 for r in rows if r["Belediye Başkanı"])
+    print(f"Yeniden ayıklandı: {len(rows)} satır | {adr} adres | {tel} telefon "
+          f"| {bsk} başkan -> {OUTPUT}")
 
 
 # ----------------------------- iş kuyruğu ------------------------------------
@@ -432,22 +475,27 @@ async def worker(context, queue, total):
             rec = await asyncio.wait_for(scrape_one(page, row), timeout=120)
         except Exception:
             rec = None
+        found = rec is not None
+        if not found:                       # ulaşılamadı -> yine de satır yaz
+            rec = empty_record(row)
         with _lock:
             _state["done"] += 1
-            if rec:
+            if found:
                 _state["ok"] += 1
-                results[idx] = rec
-                if _state["ok"] % 10 == 0:
-                    checkpoint()
+            results[idx] = rec              # her belediye satıra yazılır
+            if _state["done"] % 10 == 0:
+                checkpoint()
             d, ok = _state["done"], _state["ok"]
         label = row["ilce"] or row["il"]
         print(f"[{d}/{total}] ok={ok} {row['il']}/{label} "
-              f"-> {'✓' if rec else '—'}", flush=True)
+              f"-> {'✓' if found else '—'}", flush=True)
         await asyncio.sleep(random.uniform(1.5, 3.5))
     await page.close()
 
 
 async def main():
+    load_baskan()
+    print(f"Başkan eşlemesi yüklendi: {len(BASKAN_MAP)} kayıt", flush=True)
     rows = build_rows()
     limit = None
     if len(sys.argv) > 1:
